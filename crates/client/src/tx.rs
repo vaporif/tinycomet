@@ -105,6 +105,26 @@ async fn query_nonce(node: &str, address: &str) -> Result<u64> {
     Ok(account.nonce)
 }
 
+pub fn genesis_init(key_path: &str, balance: u128, genesis_path: &str) -> Result<()> {
+    let signing_key = load_signing_key(key_path)?;
+    let address = address_from_pubkey(&signing_key.verifying_key().to_bytes());
+
+    let mut genesis: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(genesis_path)?)?;
+
+    let app_state = serde_json::json!({
+        "accounts": [{
+            "address": format!("{address}"),
+            "balance": balance,
+        }]
+    });
+
+    genesis["app_state"] = app_state;
+    std::fs::write(genesis_path, serde_json::to_string_pretty(&genesis)?)?;
+    println!("genesis updated with account {address} balance={balance}");
+    Ok(())
+}
+
 fn base64_decode(input: &str) -> Result<Vec<u8>> {
     let engine = base64::engine::general_purpose::STANDARD;
     base64::Engine::decode(&engine, input).wrap_err("base64 decode failed")

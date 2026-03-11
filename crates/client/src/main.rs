@@ -36,6 +36,14 @@ enum Command {
         #[arg(long)]
         amount: u128,
     },
+    GenesisInit {
+        #[arg(long, default_value = "key.json")]
+        key: String,
+        #[arg(long, default_value_t = 1_000_000_000)]
+        balance: u128,
+        #[arg(long)]
+        genesis_path: String,
+    },
     Frost {
         #[command(subcommand)]
         frost_command: FrostCommand,
@@ -65,6 +73,9 @@ async fn main() -> Result<()> {
         Command::CreateAccount { key } => tx::create_account(&cli.node, &key).await?,
         Command::Transfer { key, to, amount } => {
             tx::transfer(&cli.node, &key, &to, amount).await?
+        }
+        Command::GenesisInit { key, balance, genesis_path } => {
+            tx::genesis_init(&key, balance, &genesis_path)?;
         }
         Command::Frost { frost_command } => match frost_command {
             FrostCommand::Dkg {
