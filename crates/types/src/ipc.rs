@@ -10,6 +10,7 @@ pub enum AppRequest {
     InitChain {
         chain_id: ChainId,
         initial_height: u64,
+        app_state: Vec<u8>,
     },
     CheckTx {
         tx_bytes: Vec<u8>,

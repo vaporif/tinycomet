@@ -22,6 +22,8 @@ borsh = { workspace = true }
 chrono = { workspace = true }
 hex = { workspace = true }
 thiserror = { workspace = true }
+ed25519-dalek = { workspace = true }
+serde_json = { workspace = true }
 anyhow = "1"
 tokio-util = { workspace = true }
 futures = { workspace = true }

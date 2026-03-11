@@ -30,9 +30,7 @@ fn default_cometbft_home() -> String {
 }
 
 fn dirs_home() -> Option<String> {
-    std::env::var("HOME")
-        .ok()
-        .map(|h| format!("{h}/.cometbft"))
+    std::env::var("HOME").ok().map(|h| format!("{h}/.cometbft"))
 }
 
 #[tokio::main]
@@ -40,8 +38,7 @@ async fn main() -> Result<()> {
     color_eyre::install()?;
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -60,8 +57,8 @@ async fn main() -> Result<()> {
     }
 
     let config_path = PathBuf::from(&cli.cometbft_home).join("config/config.toml");
-    let config = std::fs::read_to_string(&config_path)
-        .wrap_err("failed to read CometBFT config")?;
+    let config =
+        std::fs::read_to_string(&config_path).wrap_err("failed to read CometBFT config")?;
 
     let proxy_line = format!("proxy_app = \"unix:///{}\"", cli.cmt_socket.display());
     let mut in_rpc_section = false;
@@ -93,8 +90,7 @@ async fn main() -> Result<()> {
         .join("\n");
 
     if patched {
-        std::fs::write(&config_path, &updated)
-            .wrap_err("failed to write CometBFT config")?;
+        std::fs::write(&config_path, &updated).wrap_err("failed to write CometBFT config")?;
         tracing::info!("patched CometBFT config");
     }
 
@@ -107,10 +103,16 @@ async fn main() -> Result<()> {
     let proxy_bin = bin_dir.join("tinycomet-proxy");
 
     if !app_bin.exists() {
-        eyre::bail!("tinycomet-app not found at {} — run `cargo build` first", app_bin.display());
+        eyre::bail!(
+            "tinycomet-app not found at {} — run `cargo build` first",
+            app_bin.display()
+        );
     }
     if !proxy_bin.exists() {
-        eyre::bail!("tinycomet-proxy not found at {} — run `cargo build` first", proxy_bin.display());
+        eyre::bail!(
+            "tinycomet-proxy not found at {} — run `cargo build` first",
+            proxy_bin.display()
+        );
     }
 
     let _ = std::fs::remove_file(&cli.app_socket);
@@ -119,28 +121,34 @@ async fn main() -> Result<()> {
     tracing::info!("starting tinycomet-app");
     let mut app = Command::new(&app_bin)
         .args([
-            "--socket", &cli.app_socket.to_string_lossy(),
-            "--db-path", &cli.db_path.to_string_lossy(),
+            "--socket",
+            &cli.app_socket.to_string_lossy(),
+            "--db-path",
+            &cli.db_path.to_string_lossy(),
         ])
         .kill_on_drop(true)
         .spawn()
         .wrap_err("failed to start tinycomet-app")?;
 
-    wait_for_socket(&cli.app_socket, Duration::from_secs(10)).await
+    wait_for_socket(&cli.app_socket, Duration::from_secs(10))
+        .await
         .wrap_err("tinycomet-app did not create socket in time")?;
     tracing::info!("tinycomet-app ready");
 
     tracing::info!("starting tinycomet-proxy");
     let mut proxy = Command::new(&proxy_bin)
         .args([
-            "--app-socket", &cli.app_socket.to_string_lossy(),
-            "--cmt-socket", &cli.cmt_socket.to_string_lossy(),
+            "--app-socket",
+            &cli.app_socket.to_string_lossy(),
+            "--cmt-socket",
+            &cli.cmt_socket.to_string_lossy(),
         ])
         .kill_on_drop(true)
         .spawn()
         .wrap_err("failed to start tinycomet-proxy")?;
 
-    wait_for_socket(&cli.cmt_socket, Duration::from_secs(10)).await
+    wait_for_socket(&cli.cmt_socket, Duration::from_secs(10))
+        .await
         .wrap_err("tinycomet-proxy did not create socket in time")?;
     tracing::info!("tinycomet-proxy ready");
 

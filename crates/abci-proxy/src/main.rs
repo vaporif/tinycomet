@@ -97,6 +97,7 @@ impl Application for AbciApp {
         let AppResponse::InitChain { app_hash } = self.forward(&AppRequest::InitChain {
             chain_id: ChainId(request.chain_id),
             initial_height: request.initial_height as u64,
+            app_state: request.app_state_bytes.to_vec(),
         }) else {
             panic!("unexpected response type for InitChain");
         };
