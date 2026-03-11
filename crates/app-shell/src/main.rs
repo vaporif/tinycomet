@@ -110,9 +110,10 @@ async fn dispatch_request(request: AppRequest, state: &Arc<RwLock<State>>) -> Ap
         AppRequest::InitChain {
             chain_id,
             initial_height: _,
+            app_state,
         } => {
             let mut state = state.write().await;
-            state.handle_init_chain(chain_id, 0)
+            state.handle_init_chain(chain_id, &app_state)
         }
         AppRequest::CheckTx { tx_bytes } => {
             let state = state.read().await;
