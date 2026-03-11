@@ -1,3 +1,7 @@
+use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+
 use ed25519_dalek::SigningKey;
 use eyre::{Result, WrapErr};
 use rand::rngs::OsRng;
@@ -23,7 +27,14 @@ pub fn generate(output: &str) -> Result<()> {
     };
 
     let json = serde_json::to_string_pretty(&key_file)?;
-    std::fs::write(output, &json).wrap_err_with(|| format!("failed to write {output}"))?;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true).truncate(true);
+    #[cfg(unix)]
+    opts.mode(0o600);
+    let mut file = opts
+        .open(output)
+        .wrap_err_with(|| format!("failed to write {output}"))?;
+    file.write_all(json.as_bytes())?;
     println!("address: {address}");
     println!("key saved to {output}");
     Ok(())

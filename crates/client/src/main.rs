@@ -11,6 +11,8 @@ use eyre::Result;
 struct Cli {
     #[arg(long, default_value = "http://127.0.0.1:26657")]
     node: String,
+    #[arg(long, default_value = "test-chain")]
+    chain_id: String,
     #[command(subcommand)]
     command: Command,
 }
@@ -70,8 +72,12 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Keygen { output } => keys::generate(&output)?,
         Command::Balance { address } => query::balance(&cli.node, &address).await?,
-        Command::CreateAccount { key } => tx::create_account(&cli.node, &key).await?,
-        Command::Transfer { key, to, amount } => tx::transfer(&cli.node, &key, &to, amount).await?,
+        Command::CreateAccount { key } => {
+            tx::create_account(&cli.node, &key, &cli.chain_id).await?
+        }
+        Command::Transfer { key, to, amount } => {
+            tx::transfer(&cli.node, &key, &to, amount, &cli.chain_id).await?
+        }
         Command::GenesisInit {
             key,
             balance,

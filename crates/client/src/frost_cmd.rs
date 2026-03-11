@@ -1,3 +1,7 @@
+use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+
 use eyre::{Result, WrapErr};
 use frost_ed25519 as frost;
 use rand::rngs::OsRng;
@@ -35,7 +39,15 @@ pub fn dkg(threshold: u16, participants: u16, output_dir: &str) -> Result<()> {
         let share_json = serde_json::to_string_pretty(secret_share)?;
         let id_bytes = id.serialize();
         let id_hex = hex::encode(id_bytes);
-        std::fs::write(format!("{output_dir}/share-{id_hex}.json"), &share_json)?;
+        let share_path = format!("{output_dir}/share-{id_hex}.json");
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true).truncate(true);
+        #[cfg(unix)]
+        opts.mode(0o600);
+        let mut file = opts
+            .open(&share_path)
+            .wrap_err_with(|| format!("failed to write {share_path}"))?;
+        file.write_all(share_json.as_bytes())?;
     }
 
     println!("FROST {threshold}-of-{participants} key generated");

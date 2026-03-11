@@ -40,27 +40,27 @@ async fn broadcast(node: &str, tx_bytes: &[u8]) -> Result<()> {
         eyre::bail!("check_tx failed (code {check_code}): {log}");
     }
 
-    let deliver_code = result["deliver_tx"]["code"].as_u64().unwrap_or(0);
+    let deliver_code = result["tx_result"]["code"].as_u64().unwrap_or(0);
     if deliver_code != 0 {
-        let log = result["deliver_tx"]["log"].as_str().unwrap_or("");
-        eyre::bail!("deliver_tx failed (code {deliver_code}): {log}");
+        let log = result["tx_result"]["log"].as_str().unwrap_or("");
+        eyre::bail!("tx execution failed (code {deliver_code}): {log}");
     }
 
     println!("tx committed successfully");
     Ok(())
 }
 
-fn make_header() -> Header {
+fn make_header(chain_id: &str) -> Header {
     Header {
-        chain_id: ChainId("test-chain".to_string()),
+        chain_id: ChainId(chain_id.to_string()),
         expiration: None,
         timestamp: DateTimeUtc::now(),
     }
 }
 
-pub async fn create_account(node: &str, key_path: &str) -> Result<()> {
+pub async fn create_account(node: &str, key_path: &str, chain_id: &str) -> Result<()> {
     let tx = Transaction {
-        header: make_header(),
+        header: make_header(chain_id),
         tx_payload: TxPayload::CreateAccount,
         nonce: 1,
     };
@@ -68,7 +68,13 @@ pub async fn create_account(node: &str, key_path: &str) -> Result<()> {
     broadcast(node, &tx_bytes).await
 }
 
-pub async fn transfer(node: &str, key_path: &str, to_hex: &str, amount: u128) -> Result<()> {
+pub async fn transfer(
+    node: &str,
+    key_path: &str,
+    to_hex: &str,
+    amount: u128,
+    chain_id: &str,
+) -> Result<()> {
     let to_bytes = hex::decode(to_hex).wrap_err("invalid recipient address hex")?;
     let to = Address::try_from(to_bytes.as_slice())
         .map_err(|_| eyre::eyre!("invalid address length"))?;
@@ -80,7 +86,7 @@ pub async fn transfer(node: &str, key_path: &str, to_hex: &str, amount: u128) ->
     let nonce = query_nonce(node, &format!("{sender}")).await? + 1;
 
     let tx = Transaction {
-        header: make_header(),
+        header: make_header(chain_id),
         tx_payload: TxPayload::Transfer { to, amount },
         nonce,
     };
