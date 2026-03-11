@@ -20,6 +20,9 @@ struct Cli {
 
     #[arg(long, default_value_t = default_cometbft_home())]
     cometbft_home: String,
+
+    #[arg(long)]
+    rpc_laddr: Option<String>,
 }
 
 fn default_cometbft_home() -> String {
@@ -59,22 +62,40 @@ async fn main() -> Result<()> {
     let config_path = PathBuf::from(&cli.cometbft_home).join("config/config.toml");
     let config = std::fs::read_to_string(&config_path)
         .wrap_err("failed to read CometBFT config")?;
-    let expected_proxy = format!("proxy_app = \"unix:///{}\"", cli.cmt_socket.display());
-    if !config.contains(&expected_proxy) {
-        tracing::info!("updating CometBFT proxy_app to unix://{}", cli.cmt_socket.display());
-        let updated = config
-            .lines()
-            .map(|line| {
-                if line.starts_with("proxy_app") {
-                    expected_proxy.as_str()
-                } else {
-                    line
+
+    let proxy_line = format!("proxy_app = \"unix:///{}\"", cli.cmt_socket.display());
+    let mut in_rpc_section = false;
+    let mut patched = false;
+
+    let updated: String = config
+        .lines()
+        .map(|line| {
+            if line.starts_with("proxy_app") {
+                patched = true;
+                return proxy_line.clone();
+            }
+            if line.starts_with('[') {
+                in_rpc_section = line.starts_with("[rpc]");
+            }
+            if in_rpc_section && line.starts_with("laddr") {
+                if let Some(ref rpc_laddr) = cli.rpc_laddr {
+                    patched = true;
+                    return format!("laddr = \"tcp://{rpc_laddr}\"");
                 }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        std::fs::write(&config_path, updated)
+            }
+            if line.starts_with("db_backend") && !line.contains("goleveldb") {
+                patched = true;
+                return "db_backend = \"goleveldb\"".to_string();
+            }
+            line.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if patched {
+        std::fs::write(&config_path, &updated)
             .wrap_err("failed to write CometBFT config")?;
+        tracing::info!("patched CometBFT config");
     }
 
     let bin_dir = std::env::current_exe()

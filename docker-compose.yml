@@ -1,0 +1,78 @@
+services:
+  init:
+    build: .
+    entrypoint: cometbft
+    command:
+      - testnet
+      - --v=3
+      - --o=/testnet
+      - --hostname-prefix=node
+      - --populate-persistent-peers
+    volumes:
+      - testnet-config:/testnet
+
+  node0:
+    build: .
+    command:
+      - --cometbft-home=/testnet/node0
+      - --app-socket=/tmp/app.sock
+      - --cmt-socket=/tmp/cmt.sock
+      - --db-path=/data/tinycomet.db
+      - --rpc-laddr=0.0.0.0:26657
+    volumes:
+      - testnet-config:/testnet
+      - node0-data:/data
+    ports:
+      - "26657:26657"
+    networks:
+      - testnet
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
+  node1:
+    build: .
+    command:
+      - --cometbft-home=/testnet/node1
+      - --app-socket=/tmp/app.sock
+      - --cmt-socket=/tmp/cmt.sock
+      - --db-path=/data/tinycomet.db
+      - --rpc-laddr=0.0.0.0:26657
+    volumes:
+      - testnet-config:/testnet
+      - node1-data:/data
+    ports:
+      - "26757:26657"
+    networks:
+      - testnet
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
+  node2:
+    build: .
+    command:
+      - --cometbft-home=/testnet/node2
+      - --app-socket=/tmp/app.sock
+      - --cmt-socket=/tmp/cmt.sock
+      - --db-path=/data/tinycomet.db
+      - --rpc-laddr=0.0.0.0:26657
+    volumes:
+      - testnet-config:/testnet
+      - node2-data:/data
+    ports:
+      - "26857:26657"
+    networks:
+      - testnet
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
+volumes:
+  testnet-config:
+  node0-data:
+  node1-data:
+  node2-data:
+
+networks:
+  testnet:

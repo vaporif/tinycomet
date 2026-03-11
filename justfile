@@ -13,6 +13,12 @@ run-proxy:
 install-cometbft:
     GOBIN=/usr/local/bin/ go install github.com/cometbft/cometbft/cmd/cometbft@v0.38.21
 
+testnet-up:
+    docker compose up --build
+
+testnet-down:
+    docker compose down -v
+
 prune:
     rm -rf ~/.cometbft
     rm -rf ./data/tinycomet.db
