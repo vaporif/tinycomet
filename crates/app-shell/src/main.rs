@@ -8,11 +8,11 @@ use std::sync::Arc;
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use futures::{SinkExt, StreamExt};
+use tinycomet_types::*;
 use tokio::net::UnixListener;
 use tokio::signal;
 use tokio::sync::RwLock;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
-use tinycomet_types::*;
 
 use crate::state::State;
 use crate::storage::Storage;
@@ -39,8 +39,7 @@ async fn main() -> Result<()> {
     color_eyre::install()?;
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 

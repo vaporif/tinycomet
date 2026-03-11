@@ -72,8 +72,7 @@ pub async fn transfer(node: &str, key_path: &str, to_hex: &str, amount: u128) ->
     let to_bytes = hex::decode(to_hex).wrap_err("invalid recipient address hex")?;
     let to = Address::try_from(to_bytes.as_slice())
         .map_err(|_| eyre::eyre!("invalid address length"))?;
-    let amount =
-        NonZeroU128::new(amount).ok_or_else(|| eyre::eyre!("amount must be > 0"))?;
+    let amount = NonZeroU128::new(amount).ok_or_else(|| eyre::eyre!("amount must be > 0"))?;
 
     let signing_key = load_signing_key(key_path)?;
     let sender = address_from_pubkey(&signing_key.verifying_key().to_bytes());
@@ -94,9 +93,7 @@ async fn query_nonce(node: &str, address: &str) -> Result<u64> {
     let url = format!("{node}/abci_query?path=\"{path}\"");
     let resp: serde_json::Value = reqwest::get(&url).await?.json().await?;
 
-    let value_b64 = resp["result"]["response"]["value"]
-        .as_str()
-        .unwrap_or("");
+    let value_b64 = resp["result"]["response"]["value"].as_str().unwrap_or("");
     if value_b64.is_empty() {
         return Ok(0);
     }

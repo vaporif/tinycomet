@@ -71,10 +71,12 @@ async fn main() -> Result<()> {
         Command::Keygen { output } => keys::generate(&output)?,
         Command::Balance { address } => query::balance(&cli.node, &address).await?,
         Command::CreateAccount { key } => tx::create_account(&cli.node, &key).await?,
-        Command::Transfer { key, to, amount } => {
-            tx::transfer(&cli.node, &key, &to, amount).await?
-        }
-        Command::GenesisInit { key, balance, genesis_path } => {
+        Command::Transfer { key, to, amount } => tx::transfer(&cli.node, &key, &to, amount).await?,
+        Command::GenesisInit {
+            key,
+            balance,
+            genesis_path,
+        } => {
             tx::genesis_init(&key, balance, &genesis_path)?;
         }
         Command::Frost { frost_command } => match frost_command {
