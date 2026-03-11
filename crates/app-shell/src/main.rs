@@ -7,10 +7,11 @@ use std::sync::Arc;
 
 use clap::Parser;
 use eyre::{Result, WrapErr};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use futures::{SinkExt, StreamExt};
 use tokio::net::UnixListener;
 use tokio::signal;
 use tokio::sync::RwLock;
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tinycomet_types::*;
 
 use crate::state::State;
@@ -25,8 +26,17 @@ struct Cli {
     db_path: PathBuf,
 }
 
+fn ipc_codec() -> LengthDelimitedCodec {
+    LengthDelimitedCodec::builder()
+        .length_field_type::<u32>()
+        .little_endian()
+        .max_frame_length(MAX_FRAME_SIZE as usize)
+        .new_codec()
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    color_eyre::install()?;
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -68,33 +78,27 @@ async fn main() -> Result<()> {
 }
 
 async fn handle_connection(
-    mut stream: tokio::net::UnixStream,
+    stream: tokio::net::UnixStream,
     state: Arc<RwLock<State>>,
 ) -> Result<()> {
     tracing::debug!("new connection accepted");
-    loop {
-        let len = match stream.read_u32_le().await {
-            Ok(len) => len,
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                tracing::debug!("connection closed");
-                return Ok(());
-            }
-            Err(e) => return Err(e.into()),
-        };
-        if len > MAX_FRAME_SIZE {
-            eyre::bail!("frame size {len} exceeds maximum {MAX_FRAME_SIZE}");
-        }
-        let mut buf = vec![0u8; len as usize];
-        stream.read_exact(&mut buf).await?;
+    let mut framed = Framed::new(stream, ipc_codec());
+
+    while let Some(frame) = framed.next().await {
+        let buf = frame.wrap_err("failed to read frame")?;
         let request: AppRequest =
             borsh::from_slice(&buf).wrap_err("failed to deserialize AppRequest")?;
 
         let response = dispatch_request(request, &state).await;
         let response_bytes = borsh::to_vec(&response)?;
-        stream.write_u32_le(response_bytes.len() as u32).await?;
-        stream.write_all(&response_bytes).await?;
-        stream.flush().await?;
+        framed
+            .send(response_bytes.into())
+            .await
+            .wrap_err("failed to send response")?;
     }
+
+    tracing::debug!("connection closed");
+    Ok(())
 }
 
 async fn dispatch_request(request: AppRequest, state: &Arc<RwLock<State>>) -> AppResponse {

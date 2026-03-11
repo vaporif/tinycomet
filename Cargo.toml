@@ -18,6 +18,7 @@ tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 eyre = "0.6"
+color-eyre = "0.6"
 clap = { version = "4.5", features = ["derive"] }
 thiserror = "2.0"
 chrono = { version = "0.4", features = ["serde"] }
@@ -29,3 +30,5 @@ jmt = "0.12"
 sha2 = "0.10"
 prost = "0.13"
 bytes = "1"
+tokio-util = { version = "0.7", features = ["codec"] }
+futures = "0.3"

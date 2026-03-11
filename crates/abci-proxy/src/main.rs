@@ -1,16 +1,19 @@
+mod codec;
 mod translator;
 
 use std::path::PathBuf;
 
 use clap::Parser;
 use eyre::{Result, WrapErr};
+use futures::{SinkExt, StreamExt};
 use prost::Message;
 use tendermint_proto::v0_38::abci as pb;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::signal;
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tinycomet_types::*;
 
+use crate::codec::VarintCodec;
 use crate::translator::{abci_to_app_request, app_response_to_abci, proxy_response};
 
 #[derive(Parser)]
@@ -22,8 +25,17 @@ struct Cli {
     cmt_socket: PathBuf,
 }
 
+fn ipc_codec() -> LengthDelimitedCodec {
+    LengthDelimitedCodec::builder()
+        .length_field_type::<u32>()
+        .little_endian()
+        .max_frame_length(MAX_FRAME_SIZE as usize)
+        .new_codec()
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    color_eyre::install()?;
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -79,18 +91,13 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn handle_cmt_connection(mut cmt: UnixStream, mut app: UnixStream) -> Result<()> {
+async fn handle_cmt_connection(cmt_stream: UnixStream, app_stream: UnixStream) -> Result<()> {
     tracing::debug!("new CometBFT connection");
-    loop {
-        let request_bytes = match read_varint_prefixed(&mut cmt).await {
-            Ok(Some(bytes)) => bytes,
-            Ok(None) => {
-                tracing::debug!("CometBFT connection closed");
-                return Ok(());
-            }
-            Err(e) => return Err(e),
-        };
+    let mut cmt = Framed::new(cmt_stream, VarintCodec);
+    let mut app = Framed::new(app_stream, ipc_codec());
 
+    while let Some(frame) = cmt.next().await {
+        let request_bytes = frame.wrap_err("failed to read CometBFT frame")?;
         let request =
             pb::Request::decode(&*request_bytes).wrap_err("failed to decode ABCI request")?;
 
@@ -115,66 +122,29 @@ async fn handle_cmt_connection(mut cmt: UnixStream, mut app: UnixStream) -> Resu
         let response = pb::Response {
             value: Some(response_value),
         };
-        let response_bytes = response.encode_to_vec();
-        write_varint_prefixed(&mut cmt, &response_bytes).await?;
+        cmt.send(response.encode_to_vec().into())
+            .await
+            .wrap_err("failed to send ABCI response")?;
     }
-}
 
-async fn forward_to_app(app: &mut UnixStream, request: &AppRequest) -> Result<AppResponse> {
-    let request_bytes = borsh::to_vec(request)?;
-    app.write_u32_le(request_bytes.len() as u32).await?;
-    app.write_all(&request_bytes).await?;
-    app.flush().await?;
-
-    let len = app.read_u32_le().await?;
-    if len > MAX_FRAME_SIZE {
-        eyre::bail!("app response frame too large: {len}");
-    }
-    let mut buf = vec![0u8; len as usize];
-    app.read_exact(&mut buf).await?;
-    borsh::from_slice(&buf).wrap_err("failed to deserialize AppResponse")
-}
-
-async fn read_varint_prefixed(stream: &mut UnixStream) -> Result<Option<Vec<u8>>> {
-    let mut len: u64 = 0;
-    let mut shift: u32 = 0;
-    loop {
-        let byte = match stream.read_u8().await {
-            Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-            Err(e) => return Err(e.into()),
-        };
-        len |= ((byte & 0x7F) as u64) << shift;
-        if byte & 0x80 == 0 {
-            break;
-        }
-        shift += 7;
-        if shift >= 64 {
-            eyre::bail!("varint too long");
-        }
-    }
-    let len = len as usize;
-    let mut buf = vec![0u8; len];
-    stream.read_exact(&mut buf).await?;
-    Ok(Some(buf))
-}
-
-async fn write_varint_prefixed(stream: &mut UnixStream, data: &[u8]) -> Result<()> {
-    let mut len = data.len() as u64;
-    let mut varint_buf = Vec::with_capacity(10);
-    loop {
-        let mut byte = (len & 0x7F) as u8;
-        len >>= 7;
-        if len != 0 {
-            byte |= 0x80;
-        }
-        varint_buf.push(byte);
-        if len == 0 {
-            break;
-        }
-    }
-    stream.write_all(&varint_buf).await?;
-    stream.write_all(data).await?;
-    stream.flush().await?;
+    tracing::debug!("CometBFT connection closed");
     Ok(())
+}
+
+async fn forward_to_app(
+    app: &mut Framed<UnixStream, LengthDelimitedCodec>,
+    request: &AppRequest,
+) -> Result<AppResponse> {
+    let request_bytes = borsh::to_vec(request)?;
+    app.send(request_bytes.into())
+        .await
+        .wrap_err("failed to send to app")?;
+
+    let buf = app
+        .next()
+        .await
+        .ok_or_else(|| eyre::eyre!("app connection closed"))?
+        .wrap_err("failed to read app response")?;
+
+    borsh::from_slice(&buf).wrap_err("failed to deserialize AppResponse")
 }
