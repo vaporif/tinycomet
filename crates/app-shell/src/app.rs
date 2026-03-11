@@ -43,13 +43,51 @@ impl State {
         }
     }
 
-    pub fn handle_init_chain(&mut self, chain_id: ChainId, _initial_height: u64) -> AppResponse {
+    pub fn handle_init_chain(&mut self, chain_id: ChainId, app_state: &[u8]) -> AppResponse {
         if !self.chain_id.0.is_empty() {
             return AppResponse::InitChain {
                 app_hash: self.last_app_hash.clone(),
             };
         }
         self.chain_id = chain_id;
+
+        if !app_state.is_empty() {
+            match serde_json::from_slice::<GenesisAppState>(app_state) {
+                Ok(genesis) => {
+                    for acct in &genesis.accounts {
+                        match hex::decode(&acct.address)
+                            .ok()
+                            .and_then(|bytes| Address::try_from(bytes.as_slice()).ok())
+                        {
+                            Some(addr) => {
+                                self.pending_writes.insert(
+                                    addr,
+                                    Account {
+                                        balance: acct.balance,
+                                        nonce: 0,
+                                    },
+                                );
+                                tracing::info!(
+                                    "genesis account {} balance={}",
+                                    acct.address,
+                                    acct.balance
+                                );
+                            }
+                            None => {
+                                tracing::warn!(
+                                    "skipping invalid genesis address: {}",
+                                    acct.address
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("failed to parse genesis app_state: {e}");
+                }
+            }
+        }
+
         AppResponse::InitChain {
             app_hash: self.last_app_hash.clone(),
         }
