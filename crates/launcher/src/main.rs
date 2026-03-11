@@ -157,7 +157,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn wait_for_socket(path: &PathBuf, timeout: Duration) -> Result<()> {
+async fn wait_for_socket(path: &std::path::Path, timeout: Duration) -> Result<()> {
     let start = tokio::time::Instant::now();
     loop {
         if path.exists() {

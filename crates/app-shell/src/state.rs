@@ -1,6 +1,5 @@
 use borsh::BorshDeserialize;
 use eyre::{Result, WrapErr};
-use jmt::storage::TreeWriter;
 use jmt::{KeyHash, Sha256Jmt};
 use sha2::Sha256;
 use std::collections::HashMap;
@@ -36,7 +35,7 @@ impl State {
             return Ok(None);
         }
         let tree = Sha256Jmt::new(&self.storage);
-        let key_hash = KeyHash::with::<Sha256>(address);
+        let key_hash = KeyHash::with::<Sha256>(address.as_bytes());
         match tree
             .get(key_hash, self.current_height)
             .map_err(|e| eyre::eyre!(e))?
@@ -56,7 +55,7 @@ impl State {
             .pending_writes
             .drain()
             .map(|(address, account)| {
-                let key_hash = KeyHash::with::<Sha256>(&address);
+                let key_hash = KeyHash::with::<Sha256>(address.as_bytes());
                 let value = borsh::to_vec(&account).expect("account serialization cannot fail");
                 (key_hash, Some(value))
             })
@@ -79,8 +78,7 @@ impl State {
             .put_value_set(value_set, version)
             .map_err(|e| eyre::eyre!(e))?;
         self.storage
-            .write_node_batch(&tree_update_batch.node_batch)
-            .map_err(|e| eyre::eyre!(e))?;
+            .write_node_batch_eyre(&tree_update_batch.node_batch)?;
 
         let app_hash = root_hash.0.to_vec();
         self.storage.set_last_committed(version, &app_hash)?;

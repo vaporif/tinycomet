@@ -1,8 +1,35 @@
 use borsh::{BorshDeserialize, BorshSerialize};
+use std::fmt;
 use std::num::NonZeroU128;
 
 pub const ADDRESS_LENGTH: usize = 20;
-pub type Address = [u8; ADDRESS_LENGTH];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize)]
+pub struct Address(pub [u8; ADDRESS_LENGTH]);
+
+impl Address {
+    pub fn as_bytes(&self) -> &[u8; ADDRESS_LENGTH] {
+        &self.0
+    }
+}
+
+impl fmt::Display for Address {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in &self.0 {
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
+impl TryFrom<&[u8]> for Address {
+    type Error = std::array::TryFromSliceError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        let arr: [u8; ADDRESS_LENGTH] = bytes.try_into()?;
+        Ok(Self(arr))
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct ChainId(pub String);

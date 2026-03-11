@@ -3,11 +3,35 @@ use tinycomet_types::*;
 
 use crate::state::State;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum TxErrorCode {
+    DeserializeFailed = 1,
+    InvalidExpiration = 2,
+    Expired = 3,
+    InvalidNonce = 4,
+    StorageError = 5,
+    AccountAlreadyExists = 6,
+    SenderNotFound = 7,
+    NonceMismatch = 8,
+    InsufficientBalance = 9,
+    RecipientNotFound = 10,
+}
+
 #[derive(Error, Debug)]
-#[error("validation error (code {code}): {log}")]
-pub struct ValidationError {
+#[error("tx error (code {code}): {log}")]
+pub struct TxError {
     pub code: u32,
     pub log: String,
+}
+
+impl TxError {
+    fn new(code: TxErrorCode, log: impl Into<String>) -> Self {
+        Self {
+            code: code as u32,
+            log: log.into(),
+        }
+    }
 }
 
 impl State {
@@ -31,8 +55,8 @@ impl State {
     }
 
     pub fn handle_check_tx(&self, tx_bytes: &[u8]) -> AppResponse {
-        match self.validate_tx(tx_bytes) {
-            Ok(()) => AppResponse::CheckTx {
+        match self.parse_and_validate(tx_bytes) {
+            Ok(_) => AppResponse::CheckTx {
                 code: 0,
                 log: String::new(),
             },
@@ -49,7 +73,7 @@ impl State {
 
     pub fn handle_process_proposal(&self, txs: &[Vec<u8>]) -> AppResponse {
         for tx_bytes in txs {
-            if self.validate_tx(tx_bytes).is_err() {
+            if self.parse_and_validate(tx_bytes).is_err() {
                 return AppResponse::ProcessProposal { accepted: false };
             }
         }
@@ -65,7 +89,10 @@ impl State {
         self.current_height = height;
         let mut tx_results = Vec::with_capacity(txs.len());
         for tx_bytes in &txs {
-            match self.execute_tx(tx_bytes) {
+            let result = self
+                .parse_and_validate(tx_bytes)
+                .and_then(|tx| self.execute(&tx));
+            match result {
                 Ok(()) => tx_results.push(TxResult {
                     code: 0,
                     log: String::new(),
@@ -102,13 +129,12 @@ impl State {
     }
 
     fn query_account(&self, hex_addr: &str) -> AppResponse {
-        let address: Address = match hex::decode(hex_addr) {
-            Ok(bytes) if bytes.len() == 20 => {
-                let mut addr = [0u8; 20];
-                addr.copy_from_slice(&bytes);
-                addr
-            }
-            _ => {
+        let address = match hex::decode(hex_addr)
+            .ok()
+            .and_then(|bytes| Address::try_from(bytes.as_slice()).ok())
+        {
+            Some(addr) => addr,
+            None => {
                 return AppResponse::Query {
                     code: 2,
                     value: vec![],
@@ -135,94 +161,83 @@ impl State {
         }
     }
 
-    fn validate_tx(&self, tx_bytes: &[u8]) -> std::result::Result<(), ValidationError> {
-        let tx: Transaction = borsh::from_slice(tx_bytes).map_err(|e| ValidationError {
-            code: 1,
-            log: format!("failed to parse transaction: {e}"),
+    fn parse_and_validate(&self, tx_bytes: &[u8]) -> Result<Transaction, TxError> {
+        let tx: Transaction = borsh::from_slice(tx_bytes).map_err(|e| {
+            TxError::new(
+                TxErrorCode::DeserializeFailed,
+                format!("failed to parse transaction: {e}"),
+            )
         })?;
 
         if let Some(ref expiration) = tx.header.expiration {
-            let exp = expiration.to_chrono().map_err(|e| ValidationError {
-                code: 2,
-                log: format!("invalid expiration: {e}"),
+            let exp = expiration.to_chrono().map_err(|e| {
+                TxError::new(
+                    TxErrorCode::InvalidExpiration,
+                    format!("invalid expiration: {e}"),
+                )
             })?;
             if exp < chrono::Utc::now() {
-                return Err(ValidationError {
-                    code: 3,
-                    log: "transaction expired".to_string(),
-                });
+                return Err(TxError::new(TxErrorCode::Expired, "transaction expired"));
             }
         }
 
         match &tx.tx_payload {
             TxPayload::CreateAccount => {
                 if tx.nonce != 1 {
-                    return Err(ValidationError {
-                        code: 4,
-                        log: format!("CreateAccount nonce must be 1, got {}", tx.nonce),
-                    });
+                    return Err(TxError::new(
+                        TxErrorCode::InvalidNonce,
+                        format!("CreateAccount nonce must be 1, got {}", tx.nonce),
+                    ));
                 }
-                let existing = self.get_account(&tx.from).map_err(|e| ValidationError {
-                    code: 5,
-                    log: format!("storage error: {e:#}"),
-                })?;
-                if existing.is_some() {
-                    return Err(ValidationError {
-                        code: 6,
-                        log: format!("account {} already exists", hex::encode(tx.from)),
-                    });
+                if self.get_account(&tx.from).map_err(storage_err)?.is_some() {
+                    return Err(TxError::new(
+                        TxErrorCode::AccountAlreadyExists,
+                        format!("account {} already exists", tx.from),
+                    ));
                 }
             }
             TxPayload::Transfer { to, amount } => {
-                let sender = self.get_account(&tx.from).map_err(|e| ValidationError {
-                    code: 5,
-                    log: format!("storage error: {e:#}"),
-                })?;
-                let sender = sender.ok_or_else(|| ValidationError {
-                    code: 7,
-                    log: format!("sender {} does not exist", hex::encode(tx.from)),
-                })?;
+                let sender = self
+                    .get_account(&tx.from)
+                    .map_err(storage_err)?
+                    .ok_or_else(|| {
+                        TxError::new(
+                            TxErrorCode::SenderNotFound,
+                            format!("sender {} does not exist", tx.from),
+                        )
+                    })?;
                 if tx.nonce != sender.nonce + 1 {
-                    return Err(ValidationError {
-                        code: 8,
-                        log: format!(
+                    return Err(TxError::new(
+                        TxErrorCode::NonceMismatch,
+                        format!(
                             "nonce mismatch: expected {}, got {}",
                             sender.nonce + 1,
                             tx.nonce
                         ),
-                    });
+                    ));
                 }
                 if sender.balance < amount.get() {
-                    return Err(ValidationError {
-                        code: 9,
-                        log: format!(
+                    return Err(TxError::new(
+                        TxErrorCode::InsufficientBalance,
+                        format!(
                             "insufficient balance: have {}, need {}",
                             sender.balance,
                             amount.get()
                         ),
-                    });
+                    ));
                 }
-                let recipient = self.get_account(to).map_err(|e| ValidationError {
-                    code: 5,
-                    log: format!("storage error: {e:#}"),
-                })?;
-                if recipient.is_none() {
-                    return Err(ValidationError {
-                        code: 10,
-                        log: format!("recipient {} does not exist", hex::encode(to)),
-                    });
+                if self.get_account(to).map_err(storage_err)?.is_none() {
+                    return Err(TxError::new(
+                        TxErrorCode::RecipientNotFound,
+                        format!("recipient {} does not exist", to),
+                    ));
                 }
             }
         }
-        Ok(())
+        Ok(tx)
     }
 
-    fn execute_tx(&mut self, tx_bytes: &[u8]) -> std::result::Result<(), ValidationError> {
-        let tx: Transaction = borsh::from_slice(tx_bytes).map_err(|e| ValidationError {
-            code: 1,
-            log: format!("failed to parse transaction: {e}"),
-        })?;
-
+    fn execute(&mut self, tx: &Transaction) -> Result<(), TxError> {
         match &tx.tx_payload {
             TxPayload::CreateAccount => {
                 let account = Account {
@@ -234,23 +249,11 @@ impl State {
             TxPayload::Transfer { to, amount } => {
                 let mut sender = self
                     .get_account(&tx.from)
-                    .map_err(|e| ValidationError {
-                        code: 5,
-                        log: format!("storage error: {e:#}"),
-                    })?
-                    .ok_or_else(|| ValidationError {
-                        code: 7,
-                        log: "sender not found".to_string(),
-                    })?;
-                let mut recipient = self
-                    .get_account(to)
-                    .map_err(|e| ValidationError {
-                        code: 5,
-                        log: format!("storage error: {e:#}"),
-                    })?
-                    .ok_or_else(|| ValidationError {
-                        code: 10,
-                        log: "recipient not found".to_string(),
+                    .map_err(storage_err)?
+                    .ok_or_else(|| TxError::new(TxErrorCode::SenderNotFound, "sender not found"))?;
+                let mut recipient =
+                    self.get_account(to).map_err(storage_err)?.ok_or_else(|| {
+                        TxError::new(TxErrorCode::RecipientNotFound, "recipient not found")
                     })?;
                 sender.balance -= amount.get();
                 sender.nonce = tx.nonce;
@@ -261,4 +264,8 @@ impl State {
         }
         Ok(())
     }
+}
+
+fn storage_err(e: eyre::Report) -> TxError {
+    TxError::new(TxErrorCode::StorageError, format!("storage error: {e:#}"))
 }

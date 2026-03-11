@@ -17,6 +17,16 @@ pub struct Storage {
     db: Arc<DB>,
 }
 
+trait AnyhowToEyre<T> {
+    fn into_eyre(self) -> eyre::Result<T>;
+}
+
+impl<T> AnyhowToEyre<T> for anyhow::Result<T> {
+    fn into_eyre(self) -> eyre::Result<T> {
+        self.map_err(|e| eyre::eyre!(e))
+    }
+}
+
 impl Storage {
     pub fn open(path: &Path) -> eyre::Result<Self> {
         let mut opts = Options::default();
@@ -64,6 +74,10 @@ impl Storage {
             .write(batch)
             .map_err(|e| eyre::eyre!("failed to write meta: {e}"))?;
         Ok(())
+    }
+
+    pub fn write_node_batch_eyre(&self, node_batch: &NodeBatch) -> eyre::Result<()> {
+        self.write_node_batch(node_batch).into_eyre()
     }
 
     fn node_key_to_bytes(node_key: &NodeKey) -> Vec<u8> {
