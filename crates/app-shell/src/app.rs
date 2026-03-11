@@ -16,6 +16,7 @@ pub enum TxErrorCode {
     NonceMismatch = 8,
     InsufficientBalance = 9,
     RecipientNotFound = 10,
+    SignatureInvalid = 11,
 }
 
 #[derive(Error, Debug)]
@@ -42,13 +43,51 @@ impl State {
         }
     }
 
-    pub fn handle_init_chain(&mut self, chain_id: ChainId, _initial_height: u64) -> AppResponse {
+    pub fn handle_init_chain(&mut self, chain_id: ChainId, app_state: &[u8]) -> AppResponse {
         if !self.chain_id.0.is_empty() {
             return AppResponse::InitChain {
                 app_hash: self.last_app_hash.clone(),
             };
         }
         self.chain_id = chain_id;
+
+        if !app_state.is_empty() {
+            match serde_json::from_slice::<GenesisAppState>(app_state) {
+                Ok(genesis) => {
+                    for acct in &genesis.accounts {
+                        match hex::decode(&acct.address)
+                            .ok()
+                            .and_then(|bytes| Address::try_from(bytes.as_slice()).ok())
+                        {
+                            Some(addr) => {
+                                self.pending_writes.insert(
+                                    addr,
+                                    Account {
+                                        balance: acct.balance,
+                                        nonce: 0,
+                                    },
+                                );
+                                tracing::info!(
+                                    "genesis account {} balance={}",
+                                    acct.address,
+                                    acct.balance
+                                );
+                            }
+                            None => {
+                                tracing::warn!(
+                                    "skipping invalid genesis address: {}",
+                                    acct.address
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("failed to parse genesis app_state: {e}");
+                }
+            }
+        }
+
         AppResponse::InitChain {
             app_hash: self.last_app_hash.clone(),
         }
@@ -91,7 +130,7 @@ impl State {
         for tx_bytes in &txs {
             let result = self
                 .parse_and_validate(tx_bytes)
-                .and_then(|tx| self.execute(&tx));
+                .and_then(|(sender, tx)| self.execute(&sender, &tx));
             match result {
                 Ok(()) => tx_results.push(TxResult {
                     code: 0,
@@ -161,11 +200,27 @@ impl State {
         }
     }
 
-    fn parse_and_validate(&self, tx_bytes: &[u8]) -> Result<Transaction, TxError> {
-        let tx: Transaction = borsh::from_slice(tx_bytes).map_err(|e| {
+    fn parse_and_validate(&self, tx_bytes: &[u8]) -> Result<(Address, Transaction), TxError> {
+        let signed: SignedTransaction = borsh::from_slice(tx_bytes).map_err(|e| {
             TxError::new(
                 TxErrorCode::DeserializeFailed,
-                format!("failed to parse transaction: {e}"),
+                format!("failed to parse signed transaction: {e}"),
+            )
+        })?;
+
+        signed.verify().map_err(|e| {
+            TxError::new(
+                TxErrorCode::SignatureInvalid,
+                format!("invalid signature: {e}"),
+            )
+        })?;
+
+        let sender = signed.sender_address();
+
+        let tx: Transaction = borsh::from_slice(&signed.payload).map_err(|e| {
+            TxError::new(
+                TxErrorCode::DeserializeFailed,
+                format!("failed to parse transaction payload: {e}"),
             )
         })?;
 
@@ -189,39 +244,39 @@ impl State {
                         format!("CreateAccount nonce must be 1, got {}", tx.nonce),
                     ));
                 }
-                if self.get_account(&tx.from).map_err(storage_err)?.is_some() {
+                if self.get_account(&sender).map_err(storage_err)?.is_some() {
                     return Err(TxError::new(
                         TxErrorCode::AccountAlreadyExists,
-                        format!("account {} already exists", tx.from),
+                        format!("account {} already exists", sender),
                     ));
                 }
             }
             TxPayload::Transfer { to, amount } => {
-                let sender = self
-                    .get_account(&tx.from)
+                let acct = self
+                    .get_account(&sender)
                     .map_err(storage_err)?
                     .ok_or_else(|| {
                         TxError::new(
                             TxErrorCode::SenderNotFound,
-                            format!("sender {} does not exist", tx.from),
+                            format!("sender {} does not exist", sender),
                         )
                     })?;
-                if tx.nonce != sender.nonce + 1 {
+                if tx.nonce != acct.nonce + 1 {
                     return Err(TxError::new(
                         TxErrorCode::NonceMismatch,
                         format!(
                             "nonce mismatch: expected {}, got {}",
-                            sender.nonce + 1,
+                            acct.nonce + 1,
                             tx.nonce
                         ),
                     ));
                 }
-                if sender.balance < amount.get() {
+                if acct.balance < amount.get() {
                     return Err(TxError::new(
                         TxErrorCode::InsufficientBalance,
                         format!(
                             "insufficient balance: have {}, need {}",
-                            sender.balance,
+                            acct.balance,
                             amount.get()
                         ),
                     ));
@@ -234,31 +289,31 @@ impl State {
                 }
             }
         }
-        Ok(tx)
+        Ok((sender, tx))
     }
 
-    fn execute(&mut self, tx: &Transaction) -> Result<(), TxError> {
+    fn execute(&mut self, sender: &Address, tx: &Transaction) -> Result<(), TxError> {
         match &tx.tx_payload {
             TxPayload::CreateAccount => {
                 let account = Account {
                     balance: 1_000_000,
                     nonce: 1,
                 };
-                self.pending_writes.insert(tx.from, account);
+                self.pending_writes.insert(*sender, account);
             }
             TxPayload::Transfer { to, amount } => {
-                let mut sender = self
-                    .get_account(&tx.from)
+                let mut acct = self
+                    .get_account(sender)
                     .map_err(storage_err)?
                     .ok_or_else(|| TxError::new(TxErrorCode::SenderNotFound, "sender not found"))?;
                 let mut recipient =
                     self.get_account(to).map_err(storage_err)?.ok_or_else(|| {
                         TxError::new(TxErrorCode::RecipientNotFound, "recipient not found")
                     })?;
-                sender.balance -= amount.get();
-                sender.nonce = tx.nonce;
+                acct.balance -= amount.get();
+                acct.nonce = tx.nonce;
                 recipient.balance += amount.get();
-                self.pending_writes.insert(tx.from, sender);
+                self.pending_writes.insert(*sender, acct);
                 self.pending_writes.insert(*to, recipient);
             }
         }

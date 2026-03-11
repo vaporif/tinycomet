@@ -67,7 +67,6 @@ pub struct Header {
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct Transaction {
     pub header: Header,
-    pub from: Address,
     pub tx_payload: TxPayload,
     pub nonce: u64,
 }

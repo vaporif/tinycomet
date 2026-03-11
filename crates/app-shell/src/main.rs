@@ -8,11 +8,11 @@ use std::sync::Arc;
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use futures::{SinkExt, StreamExt};
+use tinycomet_types::*;
 use tokio::net::UnixListener;
 use tokio::signal;
 use tokio::sync::RwLock;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
-use tinycomet_types::*;
 
 use crate::state::State;
 use crate::storage::Storage;
@@ -39,8 +39,7 @@ async fn main() -> Result<()> {
     color_eyre::install()?;
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -110,9 +109,10 @@ async fn dispatch_request(request: AppRequest, state: &Arc<RwLock<State>>) -> Ap
         AppRequest::InitChain {
             chain_id,
             initial_height: _,
+            app_state,
         } => {
             let mut state = state.write().await;
-            state.handle_init_chain(chain_id, 0)
+            state.handle_init_chain(chain_id, &app_state)
         }
         AppRequest::CheckTx { tx_bytes } => {
             let state = state.read().await;
