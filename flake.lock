@@ -1,5 +1,22 @@
 {
   "nodes": {
+    "cometbft-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1769180487,
+        "narHash": "sha256-ehfFxnUBRCXFrlkpvB0UMmnNPjYEY1T1sTHbjUB+70g=",
+        "owner": "cometbft",
+        "repo": "cometbft",
+        "rev": "c56d64ec53bd72dfd99a5b0f5cb3eaad224a7021",
+        "type": "github"
+      },
+      "original": {
+        "owner": "cometbft",
+        "ref": "v0.38.21",
+        "repo": "cometbft",
+        "type": "github"
+      }
+    },
     "fenix": {
       "inputs": {
         "nixpkgs": [
@@ -39,6 +56,7 @@
     },
     "root": {
       "inputs": {
+        "cometbft-src": "cometbft-src",
         "fenix": "fenix",
         "nixpkgs": "nixpkgs"
       }

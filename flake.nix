@@ -5,11 +5,16 @@
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    cometbft-src = {
+      url = "github:cometbft/cometbft/v0.38.21";
+      flake = false;
+    };
   };
 
   outputs = {
     nixpkgs,
     fenix,
+    cometbft-src,
     ...
   }: let
     systems = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
@@ -35,12 +40,18 @@
         "rust-src"
         "rust-analyzer"
       ];
+      cometbft = pkgs.buildGoModule {
+        name = "cometbft";
+        src = cometbft-src;
+        vendorHash = "sha256-BFm+AimN+fdUPz3+MNIvJyqp8dsn5JjNaipnYsHZiC8=";
+        doCheck = false;
+      };
     in {
       default = pkgs.mkShell {
         packages =
           [
             toolchain
-            pkgs.go
+            cometbft
             pkgs.just
           ]
           ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
