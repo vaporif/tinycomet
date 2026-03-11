@@ -1,3 +1,4 @@
+mod frost_cmd;
 mod keys;
 mod query;
 mod tx;
@@ -35,6 +36,22 @@ enum Command {
         #[arg(long)]
         amount: u128,
     },
+    Frost {
+        #[command(subcommand)]
+        frost_command: FrostCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum FrostCommand {
+    Dkg {
+        #[arg(long)]
+        threshold: u16,
+        #[arg(long)]
+        participants: u16,
+        #[arg(long, default_value = "frost-keys")]
+        output_dir: String,
+    },
 }
 
 #[tokio::main]
@@ -49,6 +66,13 @@ async fn main() -> Result<()> {
         Command::Transfer { key, to, amount } => {
             tx::transfer(&cli.node, &key, &to, amount).await?
         }
+        Command::Frost { frost_command } => match frost_command {
+            FrostCommand::Dkg {
+                threshold,
+                participants,
+                output_dir,
+            } => frost_cmd::dkg(threshold, participants, &output_dir)?,
+        },
     }
 
     Ok(())
